@@ -1,0 +1,65 @@
+{
+    "menus": [
+        {
+            "center": 1,
+            "title": "اصلی",
+            "items": [
+                {
+                    "title": "علی",
+                    "app": 0,
+                    "submenu": 1
+                },
+                {
+                    "title": "حسن",
+                    "app": 0,
+                    "submenu": 2
+                }
+                  
+            ]
+        },
+        {
+            "center": 0,
+            "title": "علی",
+            "items": [
+                {
+                    "title": "علی عنوان",
+                    "url": "2595826.mp4",
+                    "img": "icons/icons_1x1_1080p.png",
+                    "app": 6,
+					"desc": "علوی توضیح"
+               },
+               {
+                    "title": "علی 2",
+                    "url": "../../videos/01_llama_drama_2160p_25f75g6sv3/manifest.mpd",
+                    "img": "icons/icons_1x1_2160p.png",
+                    "app": 6,
+					"desc": "علوی توضیح2"
+                }
+            ]
+        },
+        {
+            "center": 0,
+            "title": "حسن",
+            "items": [
+		{
+                    "title": "حسن 1",
+                    "url": "../../videos/tears_of_steel_1080p_25f75g6sv3/drm/manifest.mpd",
+					"img": "icons/icons_1x1_1080p.png",
+                    "la_url": "https://test.playready.microsoft.com/service/rightsmanager.asmx?cfg=(kid:header,sl:2000,persist:false,contentkey:EjQSNBI0EjQSNBI0EjQSNw==)",
+                    "drm": "playready",
+                    "app": 6,
+					"desc": "حسن 1"
+                },
+		{
+                    "title": "حسن 2",
+                    "url": "../../videos/02_gran_dillama_1080p_25f75g6sv5/drm/manifest.mpd",
+					"img": "icons/icons_1x1_1080p.png",
+                    "app": 6,
+					"desc": "حسن 2"
+                }
+            ]
+        }
+       
+    ],
+    "icondelay": "100"
+}

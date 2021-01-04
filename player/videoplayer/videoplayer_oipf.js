@@ -1,0 +1,684 @@
+/**
+ * OIPF AV-Object videoplayer for HbbTV 1.5 devices
+ * 
+ * 
+ *
+ * @class VideoPlayer
+ * @extends VideoPlayerBasic
+ * @constructor
+ */
+
+
+function VideoPlayer(element_id, profile, width, height){
+	console.log("VideoPlayer - Constructor");
+	
+	// Call super class constructor
+	VideoPlayerBasic.call(this, element_id, profile, width, height);
+	this.timeInMilliseconds = true;
+	console.log("Initialized " + this.element_id);
+}
+
+VideoPlayer.prototype.createPlayer = function(){
+	
+	console.log("createPlayer()");
+	
+	var self = this;
+
+	if( !$("#player")[0] ){
+		$("body").append( '<div id="player" class="hide">'
+			+'<div id="playposition"></div>'
+			+'<div id="playtime"></div>'
+			+'<div id="progress_currentTime" style="left:130px"></div>'
+            +'<div id="progressbarbg"></div><div id="progressSeekable" style="transition03all"></div><div id="progressbar" style="transition03all"></div>'
+			+'<div id="prew"></div>'
+			+'<div id="ppauseplay" class="pause"><div class="vcrbtn"></div><span id="pauseplay"></span></div> '
+			+'<div id="pff"></div>'
+			+'</div>');
+		console.log("Add player component");
+	}
+
+	if( this.profile.hbbtv == "1.5" ){
+		this.video = $("<object id='video' type='application/dash+xml'></object>")[0];
+		this.element.appendChild( this.video );
+		return true;
+	}
+};
+
+VideoPlayer.prototype.setURL = function(url){
+	console.log("setURL(",url,")");
+	
+	// add defaultVideoRoot prefix for non abolute video urls if defaultVideoRoot is set
+	if( ! url.match(/^https?\:/) && typeof defaultVideoRoot == "string" && defaultVideoRoot.length ){
+	//	url = defaultVideoRoot + url;
+	}
+	var type = "application/dash+xml";
+	if( url.match(/mp4$/) ){
+		this.video.setAttribute("type", "video/mp4");
+	}
+	else{
+		this.video.setAttribute("type", type );
+	}
+	try{
+		//this.url = url;
+		this.video.data = url;
+	} catch( e ){
+		console.log( e.message );
+	}
+
+	return;
+};
+
+VideoPlayer.prototype.checkAds = function(){
+	//console.log("checkAds");
+	if( this.adBreaks ){
+		
+		var position =  Math.floor( this.video.currentTime );
+		var self = this;
+		$.each( this.adBreaks, function(n, adBreak){
+			if( !adBreak.played && adBreak.position == position ){
+				console.log("found ad break at position " + position);
+				adBreak.played = true;
+				self.getAds( adBreak ); // play ads on current second
+				return false;
+			}
+		} );
+	}
+};
+
+VideoPlayer.prototype.prepareAdPlayers = function(){
+	
+	// if ad players are prepared do nothing
+	if( $("#ad1")[0] && $("#ad2")[0] ){
+		console.log("ready to play ads");
+		return;
+	}
+	var self = this;
+	// create new adPlayers
+	self.adPlayer = [ $("<video id='ad1' type='video/mp4' preload='auto'></video>")[0], $("<video id='ad2' type='video/mp4' preload='auto'></video>")[0] ];
+	self.element.appendChild( self.adPlayer[0] );
+	self.element.appendChild( self.adPlayer[1] );
+	self.element.appendChild( $("<div id='adInfo'></div>")[0] );
+	
+	console.log("html5 ad-video objects created");
+	
+	var adEnd = function(e){
+		self.setLoading(false);
+		
+		console.log("ad ended. adCount="+ self.adCount + " adBuffer length: " + self.adBuffer.length );
+		console.log( e.type );
+		var player = $(this);
+		if( self.adCount < self.adBuffer.length ){
+			player.addClass("hide");
+			
+			self.playAds();
+			
+		}
+		else{
+			// no more ads, continue content
+			console.log("No more ads, continue content video");
+			self.onAdBreak = false;
+			player.addClass("hide"); // hide ad video
+			$("#adInfo").removeClass("show");
+			
+			self.video.play();
+			$(self.video).removeClass("hide"); // show content video
+		}
+		
+	};
+	
+	var onAdPlay = function(){ 
+		//console.log("ad play event triggered");
+		
+		//$("#adInfo").html("");
+	};
+	
+	var onAdProgress = function(e){ 
+		//console.log( e.type );
+	};
+	
+	var onAdTimeupdate = function(){
+		//self.updateProgressBar();
+		var timeLeft = Math.floor( this.duration - this.currentTime )
+		if( timeLeft != NaN ){
+			//console.log( timeLeft );
+			$("#adInfo").addClass("show");
+			$("#adInfo").html("Ad " + self.adCount + "/" + self.adBuffer.length + " (" + timeLeft + "s)" );
+		}
+	};
+	
+	addEventListeners( self.adPlayer[0], 'ended', adEnd );
+	addEventListeners( self.adPlayer[1], 'ended', adEnd );
+	addEventListeners( self.adPlayer[0], 'playing', onAdPlay );
+	addEventListeners( self.adPlayer[1], 'playing', onAdPlay );
+	addEventListeners( self.adPlayer[0], 'timeupdate', onAdTimeupdate );
+	addEventListeners( self.adPlayer[1], 'timeupdate', onAdTimeupdate );
+	addEventListeners( self.adPlayer[0], 'progress', onAdProgress );
+	addEventListeners( self.adPlayer[1], 'progress', onAdProgress );
+};
+
+VideoPlayer.prototype.getAds = function( adBreak ){
+	this.onAdBreak = true; // disable seeking
+	this.adCount = 0;
+	this.video.pause();
+	var self = this;
+	console.log("get ads breaks=" + adBreak.ads);
+	$.get( "../getAds.php?breaks=" + adBreak.ads, function(ads){
+		self.adBuffer = ads;
+		//self.adCount = ads.length;
+		console.log( "Got " + ads.length + " ads");
+		
+		self.prepareAdPlayers();
+		
+		self.playAds();
+		
+	}, "json" );
+};
+
+VideoPlayer.prototype.playAds = function(){
+	this.onAdBreak = true; // disable seeking
+	this.video.pause();
+	$(this.video).addClass("hide");
+	
+	var self = this;
+	
+	var activeAdPlayer = self.adPlayer[ self.adCount % 2 ];
+	var idleAdPlayer = self.adPlayer[ (self.adCount + 1) % 2 ];
+	
+	// for the first ad, set active ad src. Later the active players url is always set and preload before the player is activated
+	if( self.adCount == 0 ){
+		activeAdPlayer.src = self.adBuffer[ self.adCount ];
+	}
+	
+	self.adCount++
+	
+	// set next ad url to idle player and preload it
+	if( self.adBuffer.length > self.adCount ){
+		idleAdPlayer.src = self.adBuffer[ self.adCount ];
+		idleAdPlayer.load();
+	}
+	
+	activeAdPlayer.play();
+	$( activeAdPlayer ).removeClass("hide");
+	$( idleAdPlayer ).addClass("hide");
+};
+
+
+VideoPlayer.prototype.setSubtitles = function( subtitles ){
+	if( subtitles ){
+		console.log("setSubtitles()");
+		this.subtitles = subtitles;
+	}
+	else{
+		this.subtitles = null;
+	}
+}
+
+
+VideoPlayer.prototype.sendLicenseRequest = function(callback){
+	console.log("sendLicenseRequest()");
+	
+	/***
+		Create always new DRM object and container for it if it does not exist
+	***/
+	if( !$("#drm")[0] ){
+		$("body").append("<div id='drm'></div>");
+	}
+	
+	console.log("Create DRM agent");
+	$("#drm").html('<object id="oipfDrm" type="application/oipfDrmAgent" width="0" height="0"></object>');
+	this.oipfDrm = $("#oipfDrm")[0];
+	this.drm.successCallback = callback;
+	var self = this;
+	// Case Playready
+	// TODO: other DRMs
+	if( this.drm.system == "playready" ){
+		var msgType = "application/vnd.ms-playready.initiator+xml";
+		var xmlLicenceAcquisition =
+		'<?xml version="1.0" encoding="utf-8"?>' +
+		'<PlayReadyInitiator xmlns="http://schemas.microsoft.com/DRM/2007/03/protocols/">' +
+		  '<LicenseServerUriOverride>' +
+			'<LA_URL>' +
+				this.drm.la_url +
+			'</LA_URL>' +
+		  '</LicenseServerUriOverride>' +
+		'</PlayReadyInitiator>';
+		var DRMSysID = "urn:dvb:casystemid:19219";
+		
+	}
+	else if( this.drm.system == "marlin" ){
+		var msgType = "application/vnd.marlin.drm.actiontoken+xml";
+		var xmlLicenceAcquisition =
+		'<?xml version="1.0" encoding="utf-8"?>' +
+		'<Marlin xmlns="http://marlin-drm.com/epub"><Version>1.1</Version><RightsURL><RightsIssuer><URL>'+ this.drm.la_url +'</URL></RightsIssuer></RightsURL></Marlin>';
+		var DRMSysID = "urn:dvb:casystemid:19188";
+	}
+	
+	try {
+		this.oipfDrm.onDRMMessageResult = drmMsgHandler;
+	} catch (e) {
+		console.log("sendLicenseRequest Error 1: " + e.message );
+	}
+	try {
+		this.oipfDrm.onDRMRightsError = drmRightsErrorHandler;
+	} catch (e) {
+		console.log("sendLicenseRequest Error 2: " + e.message );
+	}
+	try {
+		this.oipfDrm.sendDRMMessage(msgType, xmlLicenceAcquisition, DRMSysID);
+	} catch (e) {
+		console.log("sendLicenseRequest Error 3: " + e.message );
+	}
+	
+	
+	
+	function drmMsgHandler(msgID, resultMsg, resultCode) {
+		showInfo("msgID, resultMsg, resultCode: " + msgID +","+  resultMsg +","+ resultCode);
+		var errorMessage = "";
+		switch (resultCode) {
+			case 0:
+				self.drm.ready = true;
+				console.log("call self.drm.successCallback()");
+				self.drm.successCallback();
+			break;
+			case 1:
+				errorMessage = ("DRM: Unspecified error");
+			break;
+			case 2:
+				errorMessage = ("DRM: Cannot process request");
+			break;
+			case 3:
+				errorMessage = ("DRM: Wrong format");
+			break;
+			case 4:
+				errorMessage = ("DRM: User Consent Needed");
+			break;
+			case 5:
+				errorMessage = ("DRM: Unknown DRM system");
+			break;
+		}
+		
+		if( resultCode > 0 ){
+			showInfo( errorMessage );
+			Monitor.drmError(errorMessage);
+		}
+	}
+
+	function drmRightsErrorHandler(resultCode, id, systemid, issuer) {
+		var errorMessage = "";
+		switch (resultCode) {
+			case 0:
+				errorMessage = ("DRM: No license error");
+			break;
+			case 1:
+				errorMessage = ("DRM: Invalid license error");
+			break;
+			case 2:
+				errorMessage = ("license valid");
+			break;
+		}
+		showInfo( errorMessage );
+		Monitor.drmError(errorMessage);
+	}
+
+};
+
+VideoPlayer.prototype.setSubtitles = function(){
+	// out-of-band subtitles must be an array containing containing language code and source.ttml file url.
+	
+	try{
+		var player = this.video;
+		
+		console.log("set subs from active assets metadata 'subtitles'");
+		this.subtitles = menu.focus.subtitles;
+		
+		console.log( JSON.stringify( this.subtitles ) );
+		
+		if( this.subtitles && this.subtitles.length ){
+			
+			$.each( this.subtitles, function(i, lang){
+				//console.log( lang );
+				console.log("Subtitles " + i + ": " + lang.code + " - " + lang.src);
+				//var track = $("<track name='subtitles' value='srclang:"+ lang.code +" src: " + lang.src + "' />")[0];
+
+								
+				var track = document.createElement("track");
+				//track.kind = "captions";
+				track.kind = "subtitles";
+				track.label = "Language " + i;
+				track.srclang = lang.code;
+				track.src = lang.src;
+				track.addEventListener("load", function() {
+					console.log("text track ready: " + this.srclang);
+					if( this.language == this.subtitles[0].code ){
+						this.mode = "showing";
+						//player.textTracks[0].mode = "showing"; // disabled?
+					}
+					else{
+						this.mode = 'hidden';
+					}
+				});
+				track.addEventListener("oncuechange", function() {
+					console.log("oncuechange");
+				});
+				player.appendChild(track);
+				
+			} );
+			console.log( "Text tracks: " + player.textTracks.length );
+			$.each( player.textTracks, function(i, track){
+				console.log( track );
+			} );
+			this.subtitleTrack = 0;
+			player.textTracks[0].mode = "showing";
+		}
+		else{
+			console.log( "no subs" );
+		}
+	} catch(e){
+		console.log("r:582  " + e.description );
+	}
+};
+
+
+VideoPlayer.prototype.startVideo = function( isLive ){
+	console.log("startVideo()");
+	var self = this;
+	if( isLive ){
+		self.live = true;
+	}
+	else{
+		self.live = false;
+	}
+	
+	try{
+		var broadcast = $("#broadcast")[0];
+		if( !broadcast ){
+			$("body").append("<object type='video/broadcast' id='broadcast'></object>");
+		}
+		broadcast = $("#broadcast")[0];
+		broadcast.bindToCurrentChannel();
+		broadcast.stop();
+		console.log("broadcast stopped");
+	}
+	catch(e){
+		console.log("error stopping broadcast");
+	}
+	
+	var self = this;
+	
+	if( this.drm && this.drm.ready == false ){
+		
+		this.sendLicenseRequest( function( response ){
+			console.log("license ready ", self.drm);
+			if( self.drm.ready ){
+				self.startVideo( isLive );
+			}
+			else if( self.drm.error ){
+				showInfo( "Error: " + self.drm.error );
+			}
+			else{
+				showInfo( "Unknown DRM error! " + JSON.stringify( response ));
+			}
+		} );
+		return;
+	}
+	
+	
+	try{
+		if( !self.video ){
+			self.populate();
+			self.setEventHandlers();
+		}
+		
+		var player = this.video;
+		this.subtitles = player.textTracks;
+		
+		
+		if( menu.focus.subtitles ){
+			console.log("set OIPF OOB subs")
+			this.subtitles = menu.focus.subtitles;
+		}
+		
+		// out-of-band subtitles must be an array containing containing language code and source.ttml file url.
+		if( this.subtitles ){
+			$.each( this.subtitles, function(i, lang){
+				$(this.video).append("<param name='subtitles' value='srclang:"+ lang.code +" src: " + lang.src + "' />");
+				console.log("Set subtitle " + lang.code);
+			} );
+		}
+		
+		self.video.onPlayStateChange = function(){ self.doPlayStateChange(); };
+		self.element.removeClass("hidden");
+		self.visible = true;
+		self.video.play(1);
+		
+		self.setFullscreen(true);
+		self.displayPlayer(5);
+		
+	}
+	catch(e){
+		console.log("error setting subs: " + e);
+	}
+}
+
+VideoPlayer.prototype.pause = function(){
+	console.log("oipf player pause");
+	var self = this;
+	try{
+		self.video.play(0);
+		self.displayPlayer();
+	}
+	catch(e){
+		console.log(e);
+	}
+}
+
+VideoPlayer.prototype.stop = function(){
+	showInfo("Exit Video", 1);
+	var self = this;
+	try{
+		self.video.stop();
+		self.clearVideo();
+	}
+	catch(e){
+		console.log(e);
+	}
+}
+
+VideoPlayer.prototype.play = function(){
+	var self = this;
+	try{
+		self.video.play(1);
+		self.displayPlayer(5);
+	}
+	catch(e){
+		console.log(e);
+	}
+}
+
+VideoPlayer.prototype.clearVideo = function(){
+	console.log("clearing video");
+	var self = this;
+	self.element.addClass("hidden");
+	self.visible = false;
+	console.log("clearInterval(self.progressUpdateInterval)");
+	clearInterval(self.progressUpdateInterval);
+	try{
+		if(self.video){
+			if( self.isPlaying() ){
+				self.video.stop();
+			}
+			$( "#video" ).remove(); // clear from dom
+			this.video = null;
+			console.log("video object stopped, removed from dom and VideoPlayerClass");
+		}
+		if( $("#broadcast")[0] ){
+			console.log("bindToCurrentChannel();");
+			$("#broadcast")[0].bindToCurrentChannel();
+		}
+	}
+	catch(e){
+		console.log( e.description );
+	}
+	this.subtitles = null;
+	console.log("clearing video completed");
+}
+
+VideoPlayer.prototype.isFullscreen = function(){
+	var self = this;
+	return self.fullscreen;
+}
+
+VideoPlayer.prototype.isPlaying = function(){
+	return ( this.video && this.video.playState == 1 ); // return true/false
+}
+
+VideoPlayer.prototype.doPlayStateChange = function(){
+	var self = this;
+	if(!self.video) {
+        return;
+	}
+	switch (self.video.playState) {
+        case 0: // stopped
+        	clearInterval(self.progressUpdateInterval);
+            self.setLoading(false);
+			Monitor.videoEnded(console.log);
+            break;
+        case 1: // playing
+        	console.log("playing");
+        	self.visible = true;
+            self.setLoading(false);
+            clearInterval(self.progressUpdateInterval);
+            self.progressUpdateInterval = window.setInterval( function(){
+				if( self.seekTimer == null ){
+					self.updateProgressBar();
+					//self.displayPlayer( 5 );
+				}
+            }, 1000);
+			Monitor.videoPlaying();
+            break;
+        case 2: // paused
+            self.setLoading(false);
+            clearInterval(self.progressUpdateInterval);
+            if(self.isFullscreen()){
+                //self.controls.show();
+            }
+			Monitor.videoPaused();
+            break;
+        case 3: // connecting
+        	clearInterval(self.progressUpdateInterval);
+            self.setLoading(true, "Connecting");
+			Monitor.videoConnecting();
+            break;
+        case 4: // buffering
+        	clearInterval(self.progressUpdateInterval);
+            self.setLoading(true, "Buffering");
+			Monitor.videoBuffering();
+            break;
+        case 5: // finished
+        	clearInterval(self.progressUpdateInterval);
+            self.setLoading(false);
+            if(self.isFullscreen()){
+                //self.controls.show();
+            }
+            break;
+        case 6: // error
+        	clearInterval(self.progressUpdateInterval);
+            self.setLoading(false);
+            //self.controls.hide();
+            var error = "";
+            switch (self.video.error) {
+                case 0:
+                    error = "A/V format not supported";
+                    break;
+                case 1:
+                    error = "cannot connect to server or lost connection";
+                    break;
+                case 2:
+                    error = "unidentified error";
+                    break;
+            }
+            console.log("Error!: " + error);
+            showInfo("Error!: " + error);
+			Monitor.videoError( error );
+            //self.clearVideo();
+            break;
+        default:
+            self.setLoading(false);
+            // do nothing
+            break;
+	}
+}
+
+VideoPlayer.prototype.getStreamComponents = function(){
+	try {
+		if(typeof this.video.getComponents == 'function') {
+			this.subtitles = vidobj.getComponents( 1 ); // 1= audio
+			if (this.subtitles.length > 1) {
+				showInfo("Found "+this.subtitles.length+" audio track(s)");
+			}
+		} else {
+			showInfo("Switching audio components not supported");
+		}
+	} catch (e) {
+		showInfo("Switching audio components not supported");
+	}
+	
+}
+
+
+VideoPlayer.prototype.enableSubtitles = function( next ) {
+	console.log("enableSubtitles("+ next +")");
+	try{
+		if( next ){
+			console.log("current track: " + this.subtitleTrack  );
+			if( this.subtitleTrack == undefined || this.subtitleTrack == NaN ){
+				console.log("Change NaN to 0"  );
+				this.subtitleTrack = 0;
+			}
+			if( this.subtitleTrack === false ){
+				this.subtitleTrack = 0;
+			}
+			else{
+				this.subtitleTrack++;
+			}
+			
+			console.log("switched track: " + this.subtitleTrack  );
+		}
+		switch ( this.video.playState) {
+			case 1:
+				// components can be accessed only in PLAYING state
+				//ref 7.16.5.1.1 OIPF-DAE
+				/*
+				COMPONENT_TYPE_VIDEO: 0,
+				COMPONENT_TYPE_AUDIO: 1,
+				COMPONENT_TYPE_SUBTITLE: 2
+				*/
+				var avSubtitleComponent = this.video.getComponents( 2 );
+				if( this.subtitleTrack >= avSubtitleComponent.length){
+					this.subtitleTrack = 0;
+				}
+				console.log("Video has " + avSubtitleComponent.length + " subtitle tracks. selected track is: " + this.subtitleTrack );
+				for (var i=0; i<avSubtitleComponent.length; i++){
+					if ( this.subtitleTrack == i ) {
+						showInfo("select subtitleTrack " + i);
+						console.log("select subtitleTrack " + i);
+						this.video.selectComponent(avSubtitleComponent[i]);
+						console.log("READY");
+					} else {
+						console.log("unselect subtitleTrack " + i);
+						this.video.unselectComponent(avSubtitleComponent[i]);
+						console.log("READY");
+					}
+				}
+				
+			break;
+			case 6:
+				/*ERROR*/
+				showInfo("Error has occured");
+				break; 
+		}
+    } catch(e){
+		console.log("enableSubtitles - Error: " + e.description);
+	}
+
+}
